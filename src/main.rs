@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use bittorrent_starter_rust::decoder::parse as decode_bencoded_value;
+use bittorrent_starter_rust::{decoder::parse as decode_bencoded_value, torrent};
 
 // Available if you need it!
 // use serde_bencode
@@ -16,6 +16,7 @@ struct Args {
 enum Command {
     // Usage: your_bittorrent.sh decode "<encoded_value>"
     Decode { value: String },
+    Info { value: String },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -25,6 +26,12 @@ fn main() -> anyhow::Result<()> {
             let decoded_value = decode_bencoded_value(value.as_bytes()).expect("Failed to decode value");
             println!("{}", decoded_value);
         }
+        Command::Info { value } => {
+            let torrent_meta = torrent::Torrent::read_from_file(&value).expect("Failed to read torrent file");
+            println!("Tracker URL: {}", torrent_meta.announce);
+            println!("Length: {}", torrent_meta.info.length);
+        }
+
     }
     Ok(())
 }
