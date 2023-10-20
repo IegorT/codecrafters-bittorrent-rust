@@ -10,16 +10,16 @@ pub fn decode_bencoded_value(val: &BencodeValue) -> JsonValue {
     match val {
         BencodeValue::Bytes(b) => JsonValue::String(String::from_utf8_lossy(b).to_string()),
         BencodeValue::Int(i) => JsonValue::Number((*i).into()),
-        // BencodeValue::List(l) => {
-        //     let mut list: Vec<JsonValue> = Vec::new();
+        BencodeValue::List(l) => {
+            let mut list: Vec<JsonValue> = Vec::new();
 
-        //     for item in l {
-        //         let value = decode_bencoded_value(item);
-        //         list.push(value);
-        //     }
+            for item in l {
+                let value = decode_bencoded_value(item);
+                list.push(value);
+            }
 
-        //     JsonValue::Array(list)
-        // }
+            JsonValue::Array(list)
+        }
         // BencodeValue::Dict(d) => {
         //     let mut dict: serde_json::Map<String, JsonValue> = serde_json::Map::new();
 
