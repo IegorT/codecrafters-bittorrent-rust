@@ -20,18 +20,17 @@ pub fn decode_bencoded_value(val: &BencodeValue) -> JsonValue {
 
             JsonValue::Array(list)
         }
-        // BencodeValue::Dict(d) => {
-        //     let mut dict: serde_json::Map<String, JsonValue> = serde_json::Map::new();
+        BencodeValue::Dict(d) => {
+            let mut dict: serde_json::Map<String, JsonValue> = serde_json::Map::new();
 
-        //     for (key, value) in d {
-        //         let key_string = String::from_utf8_lossy(key).to_string();
-        //         let value = decode_bencoded_value(value);
-        //         dict.insert(key_string, value);
-        //     }
+            for (key, value) in d {
+                let key_string = String::from_utf8_lossy(key).to_string();
+                let value = decode_bencoded_value(value);
+                dict.insert(key_string, value);
+            }
 
-        //     JsonValue::Object(dict)
-        // }
-        _ => unimplemented!(),
+            JsonValue::Object(dict)
+        }
     }
 }
 
