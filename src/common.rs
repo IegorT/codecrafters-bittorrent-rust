@@ -1,10 +1,3 @@
-pub fn from_hash_to_string(hash: &[u8]) -> String {
-    hash.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<String>>()
-        .join("")
-}
-
 pub fn url_encode(value: &[u8]) -> String {
     let mut encoded = String::new();
 
