@@ -3,6 +3,7 @@ use serde_bencode::to_bytes;
 use serde_bytes::ByteBuf;
 use sha1::{Digest, Sha1};
 
+
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Torrent {
     pub announce: String,
