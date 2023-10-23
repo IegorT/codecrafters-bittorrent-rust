@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
             let torrent_meta = torrent::Torrent::read_from_file(&value).expect("Failed to read torrent file");
             println!("Tracker URL: {}", torrent_meta.announce);
             println!("Length: {}", torrent_meta.info.length);
+            println!("Info Hash: {}", torrent_meta.info.get_hash());
         }
 
     }
