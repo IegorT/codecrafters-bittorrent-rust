@@ -12,9 +12,9 @@ pub struct Torrent {
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Info {
     name: String,
-    pieces: ByteBuf,
+    pub pieces: ByteBuf,
     #[serde(rename = "piece length")]
-    piece_length: usize,
+    pub piece_length: usize,
     // For single file torrents
     pub length: usize,
 }
@@ -27,9 +27,9 @@ impl Torrent {
 }
 
 impl Info {
-    pub fn get_hash(&self) -> String {
+    pub fn get_hash(&self) -> [u8; 20] {
         let mut hasher = Sha1::new();
         hasher.update(to_bytes(&self).unwrap());
-        hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        hasher.finalize().into()
     }
 }

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use bittorrent_starter_rust::{decoder::parse as decode_bencoded_value, torrent};
+use bittorrent_starter_rust::{decoder::parse as decode_bencoded_value, torrent, common};
 
 // Available if you need it!
 // use serde_bencode
@@ -30,7 +30,9 @@ fn main() -> anyhow::Result<()> {
             let torrent_meta = torrent::Torrent::read_from_file(&value).expect("Failed to read torrent file");
             println!("Tracker URL: {}", torrent_meta.announce);
             println!("Length: {}", torrent_meta.info.length);
-            println!("Info Hash: {}", torrent_meta.info.get_hash());
+            println!("Info Hash: {}", common::from_hash_to_string(&torrent_meta.info.get_hash()));
+            println!("Piece Length: {}", torrent_meta.info.piece_length);
+            println!("Piece Hashes: {}", common::from_hash_to_string(&torrent_meta.info.pieces));
         }
 
     }
