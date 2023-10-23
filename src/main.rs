@@ -32,7 +32,8 @@ fn main() -> anyhow::Result<()> {
             println!("Length: {}", torrent_meta.info.length);
             println!("Info Hash: {}", common::from_hash_to_string(&torrent_meta.info.get_hash()));
             println!("Piece Length: {}", torrent_meta.info.piece_length);
-            println!("Piece Hashes: {}", common::from_hash_to_string(&torrent_meta.info.pieces));
+            print!("Piece Hashes:");
+            println!("{}", common::from_hash_to_string(&torrent_meta.info.pieces));
         }
 
     }
