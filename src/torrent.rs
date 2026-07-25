@@ -33,4 +33,25 @@ impl Info {
         hasher.update(to_bytes(&self).unwrap());
         hasher.finalize().into()
     }
+
+    pub fn piece_count(&self) -> usize {
+        self.pieces.len() / 20
+    }
+
+    pub fn piece_hash(&self, index: usize) -> &[u8] {
+        &self.pieces[index * 20..index * 20 + 20]
+    }
+
+    pub fn length_of_piece(&self, index: usize) -> usize {
+        if index == self.piece_count() - 1 {
+            let remainder = self.length % self.piece_length;
+            if remainder == 0 {
+                self.piece_length
+            } else {
+                remainder
+            }
+        } else {
+            self.piece_length
+        }
+    }
 }

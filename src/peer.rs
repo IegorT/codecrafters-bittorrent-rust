@@ -3,6 +3,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Peers(pub Vec<SocketAddrV4>);
@@ -133,5 +134,91 @@ impl Message {
             .await
             .context("Failed to write message payload")?;
         Ok(())
+    }
+}
+
+const BLOCK_SIZE: u32 = 16 * 1024;
+
+pub struct PeerConnection {
+    stream: TcpStream,
+}
+
+impl PeerConnection {
+    pub async fn connect(
+        addr: SocketAddrV4,
+        info_hash: [u8; 20],
+        peer_id: [u8; 20],
+    ) -> anyhow::Result<Self> {
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .context("Failed to connect to peer")?;
+
+        let handshake = Bytes::from(&Handshake::new(info_hash, peer_id));
+        stream
+            .write_all(&handshake)
+            .await
+            .context("Failed to write handshake")?;
+        let mut handshake_buf = [0u8; 68];
+        stream
+            .read_exact(&mut handshake_buf)
+            .await
+            .context("Failed to read handshake")?;
+        Handshake::try_from(&handshake_buf).context("Failed to parse handshake")?;
+
+        let bitfield = Message::read(&mut stream)
+            .await
+            .context("Failed to read bitfield message")?;
+        anyhow::ensure!(
+            bitfield.id == Message::BITFIELD,
+            "Expected bitfield message, got id {}",
+            bitfield.id
+        );
+
+        Message {
+            id: Message::INTERESTED,
+            payload: Vec::new(),
+        }
+        .write(&mut stream)
+        .await
+        .context("Failed to send interested message")?;
+
+        let unchoke = Message::read(&mut stream)
+            .await
+            .context("Failed to read unchoke message")?;
+        anyhow::ensure!(
+            unchoke.id == Message::UNCHOKE,
+            "Expected unchoke message, got id {}",
+            unchoke.id
+        );
+
+        Ok(Self { stream })
+    }
+
+    pub async fn download_piece(&mut self, index: u32, length: usize) -> anyhow::Result<Vec<u8>> {
+        let mut piece_data = Vec::with_capacity(length);
+        let mut begin: u32 = 0;
+        while (begin as usize) < length {
+            let block_length = std::cmp::min(BLOCK_SIZE, length as u32 - begin);
+            Message {
+                id: Message::REQUEST,
+                payload: Message::request_payload(index, begin, block_length),
+            }
+            .write(&mut self.stream)
+            .await
+            .context("Failed to send request message")?;
+
+            let piece_msg = Message::read(&mut self.stream)
+                .await
+                .context("Failed to read piece message")?;
+            anyhow::ensure!(
+                piece_msg.id == Message::PIECE,
+                "Expected piece message, got id {}",
+                piece_msg.id
+            );
+            piece_data.extend_from_slice(&piece_msg.payload[8..]);
+
+            begin += block_length;
+        }
+        Ok(piece_data)
     }
 }
