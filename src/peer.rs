@@ -1,6 +1,8 @@
+use anyhow::Context;
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Peers(pub Vec<SocketAddrV4>);
@@ -66,5 +68,70 @@ impl TryFrom<&[u8; 68]> for Handshake {
             info_hash: value[28..48].try_into()?,
             peer_id: value[48..68].try_into()?,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct Message {
+    pub id: u8,
+    pub payload: Vec<u8>,
+}
+
+impl Message {
+    pub const UNCHOKE: u8 = 1;
+    pub const INTERESTED: u8 = 2;
+    pub const BITFIELD: u8 = 5;
+    pub const REQUEST: u8 = 6;
+    pub const PIECE: u8 = 7;
+
+    pub fn request_payload(index: u32, begin: u32, length: u32) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(12);
+        payload.extend_from_slice(&index.to_be_bytes());
+        payload.extend_from_slice(&begin.to_be_bytes());
+        payload.extend_from_slice(&length.to_be_bytes());
+        payload
+    }
+
+    pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Self> {
+        let mut length_buf = [0u8; 4];
+        stream
+            .read_exact(&mut length_buf)
+            .await
+            .context("Failed to read message length")?;
+        let length = u32::from_be_bytes(length_buf) as usize;
+
+        let mut id_buf = [0u8; 1];
+        stream
+            .read_exact(&mut id_buf)
+            .await
+            .context("Failed to read message id")?;
+
+        let mut payload = vec![0u8; length - 1];
+        stream
+            .read_exact(&mut payload)
+            .await
+            .context("Failed to read message payload")?;
+
+        Ok(Message {
+            id: id_buf[0],
+            payload,
+        })
+    }
+
+    pub async fn write(&self, stream: &mut (impl AsyncWrite + Unpin)) -> anyhow::Result<()> {
+        let length = (self.payload.len() + 1) as u32;
+        stream
+            .write_all(&length.to_be_bytes())
+            .await
+            .context("Failed to write message length")?;
+        stream
+            .write_all(&[self.id])
+            .await
+            .context("Failed to write message id")?;
+        stream
+            .write_all(&self.payload)
+            .await
+            .context("Failed to write message payload")?;
+        Ok(())
     }
 }
