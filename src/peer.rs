@@ -190,6 +190,38 @@ impl Message {
         })
     }
 
+    pub fn parse_metadata_data(&self) -> anyhow::Result<Vec<u8>> {
+        #[derive(Deserialize)]
+        struct MetadataDataHeader {
+            msg_type: i64,
+            total_size: usize,
+        }
+
+        anyhow::ensure!(
+            self.id == Self::EXTENSION,
+            "Expected extension message, got id {}",
+            self.id
+        );
+
+        // The bencoded header is followed directly by the raw metadata bytes;
+        // serde_bencode stops at the end of the dict and ignores the rest, so
+        // we just take the last `total_size` bytes as the metadata piece.
+        let body = &self.payload[1..];
+        let header: MetadataDataHeader =
+            serde_bencode::from_bytes(body).context("Failed to parse metadata message header")?;
+        anyhow::ensure!(
+            header.msg_type == 1,
+            "Expected metadata data message (msg_type 1), got msg_type {}",
+            header.msg_type
+        );
+        anyhow::ensure!(
+            body.len() >= header.total_size,
+            "Metadata message shorter than its declared total_size"
+        );
+
+        Ok(body[body.len() - header.total_size..].to_vec())
+    }
+
     pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Self> {
         let mut length_buf = [0u8; 4];
         stream

@@ -27,7 +27,7 @@ async fn fetch_peers(tracker_req: &tracker::TrackerRequest) -> anyhow::Result<Ve
 async fn connect_to_magnet_peer(
     link: &str,
     peer_id: [u8; 20],
-) -> anyhow::Result<(tokio::net::TcpStream, [u8; 20])> {
+) -> anyhow::Result<(tokio::net::TcpStream, [u8; 20], String)> {
     let magnet_link = magnet::MagnetLink::parse(link).context("Failed to parse magnet link")?;
     let info_hash = magnet_link.info_hash_bytes()?;
     let tracker_url = magnet_link
@@ -45,7 +45,18 @@ async fn connect_to_magnet_peer(
         .await
         .context("Failed to connect to peer")?;
 
-    Ok((stream, info_hash))
+    Ok((stream, info_hash, tracker_url))
+}
+
+fn print_torrent_info(tracker_url: &str, info: &torrent::Info) {
+    println!("Tracker URL: {}", tracker_url);
+    println!("Length: {}", info.length);
+    println!("Info Hash: {}", hex::encode(info.info_hash()));
+    println!("Piece Length: {}", info.piece_length);
+    println!("Piece Hashes:");
+    for hash in info.pieces.chunks(20) {
+        println!("{}", hex::encode(hash));
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -100,14 +111,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Info { torrent } => {
             let torrent_meta = torrent::Torrent::read_from_file(&torrent)
                 .context("Failed to read torrent file")?;
-            println!("Tracker URL: {}", torrent_meta.announce);
-            println!("Length: {}", torrent_meta.info.length);
-            println!("Info Hash: {}", hex::encode(torrent_meta.info.info_hash()));
-            println!("Piece Length: {}", torrent_meta.info.piece_length);
-            println!("Piece Hashes:");
-            for hash in torrent_meta.info.pieces.chunks(20) {
-                println!("{}", hex::encode(hash));
-            }
+            print_torrent_info(&torrent_meta.announce, &torrent_meta.info);
         }
         Command::Peers { torrent } => {
             let torrent_meta = torrent::Torrent::read_from_file(&torrent)
@@ -209,7 +213,8 @@ async fn main() -> anyhow::Result<()> {
             println!("Info Hash: {}", magnet_link.info_hash);
         }
         Command::MagnetHandshake { link } => {
-            let (mut stream, info_hash) = connect_to_magnet_peer(&link, peer_id).await?;
+            let (mut stream, info_hash, _tracker_url) =
+                connect_to_magnet_peer(&link, peer_id).await?;
             let extended =
                 peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID)
                     .await?;
@@ -219,7 +224,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::MagnetInfo { link } => {
-            let (mut stream, info_hash) = connect_to_magnet_peer(&link, peer_id).await?;
+            let (mut stream, info_hash, tracker_url) =
+                connect_to_magnet_peer(&link, peer_id).await?;
             let extended =
                 peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID)
                     .await?;
@@ -231,6 +237,19 @@ async fn main() -> anyhow::Result<()> {
                 .write(&mut stream)
                 .await
                 .context("Failed to send metadata request")?;
+
+            let metadata_bytes = peer::Message::read(&mut stream)
+                .await
+                .context("Failed to read metadata message")?
+                .parse_metadata_data()?;
+            let info: torrent::Info = serde_bencode::from_bytes(&metadata_bytes)
+                .context("Failed to parse metadata into an info dictionary")?;
+            anyhow::ensure!(
+                info.info_hash() == info_hash,
+                "Metadata info hash does not match the one in the magnet link"
+            );
+
+            print_torrent_info(&tracker_url, &info);
         }
     }
     Ok(())
