@@ -1,5 +1,7 @@
 use anyhow::Context;
-use bittorrent_starter_rust::{decoder::parse as decode_bencoded_value, peer, torrent, tracker};
+use bittorrent_starter_rust::{
+    decoder::parse as decode_bencoded_value, magnet, peer, torrent, tracker,
+};
 use clap::{Parser, Subcommand};
 use sha1::{Digest, Sha1};
 use std::net::SocketAddrV4;
@@ -49,6 +51,9 @@ enum Command {
         #[arg(short = 'o')]
         output: String,
         torrent: String,
+    },
+    MagnetParse {
+        link: String,
     },
 }
 
@@ -171,6 +176,13 @@ async fn main() -> anyhow::Result<()> {
 
             std::fs::write(&output, &file_data).context("Failed to write file to disk")?;
             println!("Downloaded {} to {}.", torrent, output);
+        }
+        Command::MagnetParse { link } => {
+            let magnet_link = magnet::MagnetLink::parse(&link).context("Failed to parse magnet link")?;
+            if let Some(tracker_url) = &magnet_link.tracker_url {
+                println!("Tracker URL: {}", tracker_url);
+            }
+            println!("Info Hash: {}", magnet_link.info_hash);
         }
     }
     Ok(())
