@@ -215,6 +215,15 @@ async fn main() -> anyhow::Result<()> {
                     .write(&mut stream)
                     .await
                     .context("Failed to send extension handshake")?;
+
+                let peer_extensions = peer::Message::read(&mut stream)
+                    .await
+                    .context("Failed to read extension handshake message")?
+                    .parse_extension_handshake()?;
+                let peer_metadata_id = peer_extensions
+                    .get("ut_metadata")
+                    .context("Peer does not support the ut_metadata extension")?;
+                println!("Peer Metadata Extension ID: {}", peer_metadata_id);
             }
         }
     }

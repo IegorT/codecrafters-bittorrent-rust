@@ -117,6 +117,11 @@ pub struct Message {
     pub payload: Vec<u8>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct ExtensionHandshakePayload {
+    m: std::collections::HashMap<String, i64>,
+}
+
 impl Message {
     pub const UNCHOKE: u8 = 1;
     pub const INTERESTED: u8 = 2;
@@ -134,13 +139,8 @@ impl Message {
     }
 
     pub fn extension_handshake(ut_metadata_id: u8) -> anyhow::Result<Self> {
-        #[derive(Serialize)]
-        struct ExtensionHandshakePayload {
-            m: std::collections::HashMap<&'static str, u8>,
-        }
-
         let dict = ExtensionHandshakePayload {
-            m: std::collections::HashMap::from([("ut_metadata", ut_metadata_id)]),
+            m: std::collections::HashMap::from([("ut_metadata".to_string(), ut_metadata_id as i64)]),
         };
 
         let mut payload = vec![0u8]; // extended message id 0 = handshake
@@ -150,6 +150,23 @@ impl Message {
             id: Message::EXTENSION,
             payload,
         })
+    }
+
+    pub fn parse_extension_handshake(&self) -> anyhow::Result<std::collections::HashMap<String, i64>> {
+        anyhow::ensure!(
+            self.id == Self::EXTENSION,
+            "Expected extension message, got id {}",
+            self.id
+        );
+        anyhow::ensure!(
+            self.payload.first() == Some(&0),
+            "Expected extension handshake, got extended message id {:?}",
+            self.payload.first()
+        );
+
+        let dict: ExtensionHandshakePayload = serde_bencode::from_bytes(&self.payload[1..])
+            .context("Failed to parse extension handshake payload")?;
+        Ok(dict.m)
     }
 
     pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Self> {
