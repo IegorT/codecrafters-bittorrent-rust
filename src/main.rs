@@ -10,6 +10,7 @@ use std::net::SocketAddrV4;
 // use serde_bencode
 
 const PEER_ID: &[u8; 20] = b"00112233445566778899";
+const UT_METADATA_ID: u8 = 1;
 
 async fn fetch_peers(tracker_req: &tracker::TrackerRequest) -> anyhow::Result<Vec<SocketAddrV4>> {
     let response = reqwest::get(tracker_req.url())
@@ -197,6 +198,22 @@ async fn main() -> anyhow::Result<()> {
                 .context("Failed to connect to peer")?;
             let handshake = peer::Handshake::perform(&mut stream, info_hash, *PEER_ID, true).await?;
             println!("Peer ID: {}", hex::encode(handshake.peer_id));
+
+            let bitfield = peer::Message::read(&mut stream)
+                .await
+                .context("Failed to read bitfield message")?;
+            anyhow::ensure!(
+                bitfield.id == peer::Message::BITFIELD,
+                "Expected bitfield message, got id {}",
+                bitfield.id
+            );
+
+            if handshake.supports_extensions() {
+                peer::Message::extension_handshake(UT_METADATA_ID)?
+                    .write(&mut stream)
+                    .await
+                    .context("Failed to send extension handshake")?;
+            }
         }
     }
     Ok(())

@@ -35,6 +35,10 @@ pub struct Handshake {
 }
 
 impl Handshake {
+    // 20th bit from the right in the reserved bytes, see BEP 10.
+    const EXTENSION_SUPPORT_BYTE: usize = 5;
+    const EXTENSION_SUPPORT_MASK: u8 = 0x10;
+
     pub fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
         Self {
             length: 19,
@@ -46,8 +50,12 @@ impl Handshake {
     }
 
     pub fn with_extension_support(mut self) -> Self {
-        self.reserved[5] |= 0x10;
+        self.reserved[Self::EXTENSION_SUPPORT_BYTE] |= Self::EXTENSION_SUPPORT_MASK;
         self
+    }
+
+    pub fn supports_extensions(&self) -> bool {
+        self.reserved[Self::EXTENSION_SUPPORT_BYTE] & Self::EXTENSION_SUPPORT_MASK != 0
     }
 
     pub async fn perform(
@@ -115,6 +123,7 @@ impl Message {
     pub const BITFIELD: u8 = 5;
     pub const REQUEST: u8 = 6;
     pub const PIECE: u8 = 7;
+    pub const EXTENSION: u8 = 20;
 
     pub fn request_payload(index: u32, begin: u32, length: u32) -> Vec<u8> {
         let mut payload = Vec::with_capacity(12);
@@ -122,6 +131,25 @@ impl Message {
         payload.extend_from_slice(&begin.to_be_bytes());
         payload.extend_from_slice(&length.to_be_bytes());
         payload
+    }
+
+    pub fn extension_handshake(ut_metadata_id: u8) -> anyhow::Result<Self> {
+        #[derive(Serialize)]
+        struct ExtensionHandshakePayload {
+            m: std::collections::HashMap<&'static str, u8>,
+        }
+
+        let dict = ExtensionHandshakePayload {
+            m: std::collections::HashMap::from([("ut_metadata", ut_metadata_id)]),
+        };
+
+        let mut payload = vec![0u8]; // extended message id 0 = handshake
+        payload.extend(serde_bencode::to_bytes(&dict)?);
+
+        Ok(Message {
+            id: Message::EXTENSION,
+            payload,
+        })
     }
 
     pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Self> {
