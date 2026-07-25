@@ -169,6 +169,27 @@ impl Message {
         Ok(dict.m)
     }
 
+    pub fn metadata_request(peer_metadata_id: u8, piece: u32) -> anyhow::Result<Self> {
+        #[derive(Serialize)]
+        struct MetadataRequestPayload {
+            msg_type: i64,
+            piece: i64,
+        }
+
+        let dict = MetadataRequestPayload {
+            msg_type: 0,
+            piece: piece as i64,
+        };
+
+        let mut payload = vec![peer_metadata_id];
+        payload.extend(serde_bencode::to_bytes(&dict)?);
+
+        Ok(Message {
+            id: Message::EXTENSION,
+            payload,
+        })
+    }
+
     pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Self> {
         let mut length_buf = [0u8; 4];
         stream
@@ -211,6 +232,49 @@ impl Message {
             .context("Failed to write message payload")?;
         Ok(())
     }
+}
+
+pub struct ExtendedHandshake {
+    pub handshake: Handshake,
+    pub peer_metadata_id: Option<u8>,
+}
+
+pub async fn perform_extended_handshake(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+    our_metadata_id: u8,
+) -> anyhow::Result<ExtendedHandshake> {
+    let handshake = Handshake::perform(stream, info_hash, peer_id, true).await?;
+
+    let bitfield = Message::read(stream)
+        .await
+        .context("Failed to read bitfield message")?;
+    anyhow::ensure!(
+        bitfield.id == Message::BITFIELD,
+        "Expected bitfield message, got id {}",
+        bitfield.id
+    );
+
+    let peer_metadata_id = if handshake.supports_extensions() {
+        Message::extension_handshake(our_metadata_id)?
+            .write(stream)
+            .await
+            .context("Failed to send extension handshake")?;
+
+        let peer_extensions = Message::read(stream)
+            .await
+            .context("Failed to read extension handshake message")?
+            .parse_extension_handshake()?;
+        peer_extensions.get("ut_metadata").map(|id| *id as u8)
+    } else {
+        None
+    };
+
+    Ok(ExtendedHandshake {
+        handshake,
+        peer_metadata_id,
+    })
 }
 
 const BLOCK_SIZE: u32 = 16 * 1024;

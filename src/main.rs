@@ -24,6 +24,30 @@ async fn fetch_peers(tracker_req: &tracker::TrackerRequest) -> anyhow::Result<Ve
     Ok(tracker_response.get_peers().0)
 }
 
+async fn connect_to_magnet_peer(
+    link: &str,
+    peer_id: [u8; 20],
+) -> anyhow::Result<(tokio::net::TcpStream, [u8; 20])> {
+    let magnet_link = magnet::MagnetLink::parse(link).context("Failed to parse magnet link")?;
+    let info_hash = magnet_link.info_hash_bytes()?;
+    let tracker_url = magnet_link
+        .tracker_url
+        .context("Magnet link missing tracker URL")?;
+
+    let tracker_req = tracker::TrackerRequest::new_for_magnet(&peer_id, &tracker_url, info_hash);
+    let peer_addr = fetch_peers(&tracker_req)
+        .await?
+        .into_iter()
+        .next()
+        .context("No peers available")?;
+
+    let stream = tokio::net::TcpStream::connect(peer_addr)
+        .await
+        .context("Failed to connect to peer")?;
+
+    Ok((stream, info_hash))
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -54,6 +78,9 @@ enum Command {
         link: String,
     },
     MagnetHandshake {
+        link: String,
+    },
+    MagnetInfo {
         link: String,
     },
 }
@@ -182,49 +209,28 @@ async fn main() -> anyhow::Result<()> {
             println!("Info Hash: {}", magnet_link.info_hash);
         }
         Command::MagnetHandshake { link } => {
-            let magnet_link = magnet::MagnetLink::parse(&link).context("Failed to parse magnet link")?;
-            let info_hash = magnet_link.info_hash_bytes()?;
-            let tracker_url = magnet_link
-                .tracker_url
-                .context("Magnet link missing tracker URL")?;
-
-            let tracker_req = tracker::TrackerRequest::new_for_magnet(&peer_id, &tracker_url, info_hash);
-            let peer_addr = fetch_peers(&tracker_req)
-                .await?
-                .into_iter()
-                .next()
-                .context("No peers available")?;
-
-            let mut stream = tokio::net::TcpStream::connect(peer_addr)
-                .await
-                .context("Failed to connect to peer")?;
-            let handshake = peer::Handshake::perform(&mut stream, info_hash, peer_id, true).await?;
-            println!("Peer ID: {}", hex::encode(handshake.peer_id));
-
-            let bitfield = peer::Message::read(&mut stream)
-                .await
-                .context("Failed to read bitfield message")?;
-            anyhow::ensure!(
-                bitfield.id == peer::Message::BITFIELD,
-                "Expected bitfield message, got id {}",
-                bitfield.id
-            );
-
-            if handshake.supports_extensions() {
-                peer::Message::extension_handshake(UT_METADATA_ID)?
-                    .write(&mut stream)
-                    .await
-                    .context("Failed to send extension handshake")?;
-
-                let peer_extensions = peer::Message::read(&mut stream)
-                    .await
-                    .context("Failed to read extension handshake message")?
-                    .parse_extension_handshake()?;
-                let peer_metadata_id = peer_extensions
-                    .get("ut_metadata")
-                    .context("Peer does not support the ut_metadata extension")?;
+            let (mut stream, info_hash) = connect_to_magnet_peer(&link, peer_id).await?;
+            let extended =
+                peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID)
+                    .await?;
+            println!("Peer ID: {}", hex::encode(extended.handshake.peer_id));
+            if let Some(peer_metadata_id) = extended.peer_metadata_id {
                 println!("Peer Metadata Extension ID: {}", peer_metadata_id);
             }
+        }
+        Command::MagnetInfo { link } => {
+            let (mut stream, info_hash) = connect_to_magnet_peer(&link, peer_id).await?;
+            let extended =
+                peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID)
+                    .await?;
+            let peer_metadata_id = extended
+                .peer_metadata_id
+                .context("Peer does not support the ut_metadata extension")?;
+
+            peer::Message::metadata_request(peer_metadata_id, 0)?
+                .write(&mut stream)
+                .await
+                .context("Failed to send metadata request")?;
         }
     }
     Ok(())
