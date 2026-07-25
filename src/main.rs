@@ -5,15 +5,13 @@ use bittorrent_starter_rust::{
 use clap::{Parser, Subcommand};
 use sha1::{Digest, Sha1};
 use std::net::SocketAddrV4;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Available if you need it!
 // use serde_bencode
 
 const PEER_ID: &[u8; 20] = b"00112233445566778899";
 
-async fn fetch_peers(torrent_meta: &torrent::Torrent) -> anyhow::Result<Vec<SocketAddrV4>> {
-    let tracker_req = tracker::TrackerRequest::new(PEER_ID, torrent_meta);
+async fn fetch_peers(tracker_req: &tracker::TrackerRequest) -> anyhow::Result<Vec<SocketAddrV4>> {
     let response = reqwest::get(tracker_req.url())
         .await
         .context("Failed to get tracker response")?;
@@ -55,6 +53,9 @@ enum Command {
     MagnetParse {
         link: String,
     },
+    MagnetHandshake {
+        link: String,
+    },
 }
 
 #[tokio::main]
@@ -81,7 +82,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Peers { torrent } => {
             let torrent_meta = torrent::Torrent::read_from_file(&torrent)
                 .context("Failed to read torrent file")?;
-            for peer in fetch_peers(&torrent_meta).await? {
+            let tracker_req = tracker::TrackerRequest::new(PEER_ID, &torrent_meta);
+            for peer in fetch_peers(&tracker_req).await? {
                 println!("{}", peer);
             }
         }
@@ -89,7 +91,8 @@ async fn main() -> anyhow::Result<()> {
             let torrent_meta = torrent::Torrent::read_from_file(&torrent)
                 .context("Failed to read torrent file")?;
             let peer_addr: SocketAddrV4 = peer.parse().context("Failed to parse peer address")?;
-            let _peer_addr = fetch_peers(&torrent_meta)
+            let tracker_req = tracker::TrackerRequest::new(PEER_ID, &torrent_meta);
+            let _peer_addr = fetch_peers(&tracker_req)
                 .await?
                 .into_iter()
                 .find(|p| *p == peer_addr)
@@ -97,20 +100,9 @@ async fn main() -> anyhow::Result<()> {
             let mut stream = tokio::net::TcpStream::connect(peer_addr)
                 .await
                 .context("Failed to connect to peer")?;
-            let handshake = bytes::Bytes::from(&peer::Handshake::new(
-                torrent_meta.info.info_hash(),
-                *PEER_ID,
-            ));
-            let mut buf = [0u8; 68];
-            stream
-                .write_all(&handshake)
-                .await
-                .context("Failed to write handshake")?;
-            stream
-                .read_exact(&mut buf)
-                .await
-                .context("Failed to read handshake")?;
-            let handshake = peer::Handshake::try_from(&buf).context("Failed to parse handshake")?;
+            let handshake =
+                peer::Handshake::perform(&mut stream, torrent_meta.info.info_hash(), *PEER_ID, false)
+                    .await?;
             println!("Peer ID: {}", hex::encode(handshake.peer_id));
         }
         Command::DownloadPiece {
@@ -124,7 +116,8 @@ async fn main() -> anyhow::Result<()> {
                 piece_index < torrent_meta.info.piece_count(),
                 "Piece index out of range"
             );
-            let peer_addr = fetch_peers(&torrent_meta)
+            let tracker_req = tracker::TrackerRequest::new(PEER_ID, &torrent_meta);
+            let peer_addr = fetch_peers(&tracker_req)
                 .await?
                 .into_iter()
                 .next()
@@ -150,7 +143,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Download { output, torrent } => {
             let torrent_meta = torrent::Torrent::read_from_file(&torrent)
                 .context("Failed to read torrent file")?;
-            let peer_addr = fetch_peers(&torrent_meta)
+            let tracker_req = tracker::TrackerRequest::new(PEER_ID, &torrent_meta);
+            let peer_addr = fetch_peers(&tracker_req)
                 .await?
                 .into_iter()
                 .next()
@@ -183,6 +177,26 @@ async fn main() -> anyhow::Result<()> {
                 println!("Tracker URL: {}", tracker_url);
             }
             println!("Info Hash: {}", magnet_link.info_hash);
+        }
+        Command::MagnetHandshake { link } => {
+            let magnet_link = magnet::MagnetLink::parse(&link).context("Failed to parse magnet link")?;
+            let info_hash = magnet_link.info_hash_bytes()?;
+            let tracker_url = magnet_link
+                .tracker_url
+                .context("Magnet link missing tracker URL")?;
+
+            let tracker_req = tracker::TrackerRequest::new_for_magnet(PEER_ID, &tracker_url, info_hash);
+            let peer_addr = fetch_peers(&tracker_req)
+                .await?
+                .into_iter()
+                .next()
+                .context("No peers available")?;
+
+            let mut stream = tokio::net::TcpStream::connect(peer_addr)
+                .await
+                .context("Failed to connect to peer")?;
+            let handshake = peer::Handshake::perform(&mut stream, info_hash, *PEER_ID, true).await?;
+            println!("Peer ID: {}", hex::encode(handshake.peer_id));
         }
     }
     Ok(())

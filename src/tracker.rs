@@ -37,6 +37,21 @@ impl TrackerRequest {
         }
     }
 
+    pub fn new_for_magnet(peer_id: &[u8; 20], tracker_url: &str, info_hash: [u8; 20]) -> Self {
+        TrackerRequest {
+            url: tracker_url.to_string(),
+            info_hash,
+            peer_id: *peer_id,
+            port: 6881,
+            uploaded: 0,
+            downloaded: 0,
+            compact: 1,
+            // Actual file length is unknown from a magnet link alone until the
+            // metadata exchange happens, so this is a placeholder.
+            left: 999,
+        }
+    }
+
     pub fn url(&self) -> String {
         format!(
             "{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}&compact={}&left={}",

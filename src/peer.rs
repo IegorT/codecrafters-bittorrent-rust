@@ -44,6 +44,37 @@ impl Handshake {
             peer_id,
         }
     }
+
+    pub fn with_extension_support(mut self) -> Self {
+        self.reserved[5] |= 0x10;
+        self
+    }
+
+    pub async fn perform(
+        stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+        info_hash: [u8; 20],
+        peer_id: [u8; 20],
+        support_extensions: bool,
+    ) -> anyhow::Result<Self> {
+        let mut handshake = Handshake::new(info_hash, peer_id);
+        if support_extensions {
+            handshake = handshake.with_extension_support();
+        }
+
+        let bytes = Bytes::from(&handshake);
+        stream
+            .write_all(&bytes)
+            .await
+            .context("Failed to write handshake")?;
+
+        let mut buf = [0u8; 68];
+        stream
+            .read_exact(&mut buf)
+            .await
+            .context("Failed to read handshake")?;
+
+        Handshake::try_from(&buf).context("Failed to parse handshake")
+    }
 }
 
 impl From<&Handshake> for Bytes {
@@ -153,17 +184,7 @@ impl PeerConnection {
             .await
             .context("Failed to connect to peer")?;
 
-        let handshake = Bytes::from(&Handshake::new(info_hash, peer_id));
-        stream
-            .write_all(&handshake)
-            .await
-            .context("Failed to write handshake")?;
-        let mut handshake_buf = [0u8; 68];
-        stream
-            .read_exact(&mut handshake_buf)
-            .await
-            .context("Failed to read handshake")?;
-        Handshake::try_from(&handshake_buf).context("Failed to parse handshake")?;
+        Handshake::perform(&mut stream, info_hash, peer_id, false).await?;
 
         let bitfield = Message::read(&mut stream)
             .await

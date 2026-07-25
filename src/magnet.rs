@@ -43,4 +43,11 @@ impl MagnetLink {
             tracker_url,
         })
     }
+
+    pub fn info_hash_bytes(&self) -> anyhow::Result<[u8; 20]> {
+        hex::decode(&self.info_hash)
+            .context("Failed to decode info hash")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Info hash must be 20 bytes"))
+    }
 }
