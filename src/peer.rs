@@ -195,17 +195,26 @@ impl PeerConnection {
     }
 
     pub async fn download_piece(&mut self, index: u32, length: usize) -> anyhow::Result<Vec<u8>> {
-        let mut piece_data = Vec::with_capacity(length);
-        let mut begin: u32 = 0;
-        while (begin as usize) < length {
-            let block_length = std::cmp::min(BLOCK_SIZE, length as u32 - begin);
-            Message {
-                id: Message::REQUEST,
-                payload: Message::request_payload(index, begin, block_length),
+        const PIPELINE_DEPTH: u32 = 5;
+
+        let mut piece_data = vec![0u8; length];
+        let mut requested: u32 = 0;
+        let mut received: usize = 0;
+        let mut in_flight: u32 = 0;
+
+        while received < length {
+            while in_flight < PIPELINE_DEPTH && (requested as usize) < length {
+                let block_length = std::cmp::min(BLOCK_SIZE, length as u32 - requested);
+                Message {
+                    id: Message::REQUEST,
+                    payload: Message::request_payload(index, requested, block_length),
+                }
+                .write(&mut self.stream)
+                .await
+                .context("Failed to send request message")?;
+                requested += block_length;
+                in_flight += 1;
             }
-            .write(&mut self.stream)
-            .await
-            .context("Failed to send request message")?;
 
             let piece_msg = Message::read(&mut self.stream)
                 .await
@@ -215,10 +224,14 @@ impl PeerConnection {
                 "Expected piece message, got id {}",
                 piece_msg.id
             );
-            piece_data.extend_from_slice(&piece_msg.payload[8..]);
-
-            begin += block_length;
+            let begin =
+                u32::from_be_bytes(piece_msg.payload[4..8].try_into().unwrap()) as usize;
+            let block = &piece_msg.payload[8..];
+            piece_data[begin..begin + block.len()].copy_from_slice(block);
+            received += block.len();
+            in_flight -= 1;
         }
+
         Ok(piece_data)
     }
 }
