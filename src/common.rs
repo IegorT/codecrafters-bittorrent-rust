@@ -1,16 +1,13 @@
-pub fn url_encode(value: &[u8]) -> String {
-    let mut encoded = String::new();
+use std::fmt::Write;
 
-    for byte in value {
-        if byte.is_ascii_alphanumeric()
-            || *byte == b'-'
-            || *byte == b'_'
-            || *byte == b'.'
-            || *byte == b'~'
-        {
-            encoded.push(*byte as char);
+pub fn url_encode(value: &[u8]) -> String {
+    let mut encoded = String::with_capacity(value.len() * 3);
+
+    for &byte in value {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
         } else {
-            encoded.push_str(format!("%{:02X}", byte).as_str());
+            write!(encoded, "%{byte:02X}").unwrap();
         }
     }
 
