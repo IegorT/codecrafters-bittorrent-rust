@@ -336,6 +336,13 @@ impl PeerConnection {
             bitfield.id
         );
 
+        Self::from_stream(stream).await
+    }
+
+    // For a stream that already completed the base handshake and consumed
+    // the bitfield message (e.g. after a magnet link's extension handshake
+    // and metadata exchange), this picks up from the interested/unchoke step.
+    pub async fn from_stream(mut stream: TcpStream) -> anyhow::Result<Self> {
         Message {
             id: Message::INTERESTED,
             payload: Vec::new(),

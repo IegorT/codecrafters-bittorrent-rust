@@ -48,6 +48,36 @@ async fn connect_to_magnet_peer(
     Ok((stream, info_hash, tracker_url))
 }
 
+async fn fetch_metadata_info(
+    mut stream: tokio::net::TcpStream,
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+) -> anyhow::Result<(tokio::net::TcpStream, torrent::Info)> {
+    let extended =
+        peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID).await?;
+    let peer_metadata_id = extended
+        .peer_metadata_id
+        .context("Peer does not support the ut_metadata extension")?;
+
+    peer::Message::metadata_request(peer_metadata_id, 0)?
+        .write(&mut stream)
+        .await
+        .context("Failed to send metadata request")?;
+
+    let metadata_bytes = peer::Message::read(&mut stream)
+        .await
+        .context("Failed to read metadata message")?
+        .parse_metadata_data()?;
+    let info: torrent::Info = serde_bencode::from_bytes(&metadata_bytes)
+        .context("Failed to parse metadata into an info dictionary")?;
+    anyhow::ensure!(
+        info.info_hash() == info_hash,
+        "Metadata info hash does not match the one in the magnet link"
+    );
+
+    Ok((stream, info))
+}
+
 fn print_torrent_info(tracker_url: &str, info: &torrent::Info) {
     println!("Tracker URL: {}", tracker_url);
     println!("Length: {}", info.length);
@@ -93,6 +123,12 @@ enum Command {
     },
     MagnetInfo {
         link: String,
+    },
+    MagnetDownloadPiece {
+        #[arg(short = 'o')]
+        output: String,
+        link: String,
+        piece_index: usize,
     },
 }
 
@@ -224,32 +260,32 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::MagnetInfo { link } => {
-            let (mut stream, info_hash, tracker_url) =
-                connect_to_magnet_peer(&link, peer_id).await?;
-            let extended =
-                peer::perform_extended_handshake(&mut stream, info_hash, peer_id, UT_METADATA_ID)
-                    .await?;
-            let peer_metadata_id = extended
-                .peer_metadata_id
-                .context("Peer does not support the ut_metadata extension")?;
-
-            peer::Message::metadata_request(peer_metadata_id, 0)?
-                .write(&mut stream)
-                .await
-                .context("Failed to send metadata request")?;
-
-            let metadata_bytes = peer::Message::read(&mut stream)
-                .await
-                .context("Failed to read metadata message")?
-                .parse_metadata_data()?;
-            let info: torrent::Info = serde_bencode::from_bytes(&metadata_bytes)
-                .context("Failed to parse metadata into an info dictionary")?;
-            anyhow::ensure!(
-                info.info_hash() == info_hash,
-                "Metadata info hash does not match the one in the magnet link"
-            );
-
+            let (stream, info_hash, tracker_url) = connect_to_magnet_peer(&link, peer_id).await?;
+            let (_stream, info) = fetch_metadata_info(stream, info_hash, peer_id).await?;
             print_torrent_info(&tracker_url, &info);
+        }
+        Command::MagnetDownloadPiece {
+            output,
+            link,
+            piece_index,
+        } => {
+            let (stream, info_hash, _tracker_url) =
+                connect_to_magnet_peer(&link, peer_id).await?;
+            let (stream, info) = fetch_metadata_info(stream, info_hash, peer_id).await?;
+            anyhow::ensure!(piece_index < info.piece_count(), "Piece index out of range");
+
+            let mut connection = peer::PeerConnection::from_stream(stream)
+                .await
+                .context("Failed to establish peer connection")?;
+
+            let piece_data = connection
+                .download_piece(piece_index as u32, info.length_of_piece(piece_index))
+                .await
+                .context("Failed to download piece")?;
+            verify_piece(&piece_data, info.piece_hash(piece_index))?;
+
+            std::fs::write(&output, &piece_data).context("Failed to write piece to disk")?;
+            println!("Piece {} downloaded to {}.", piece_index, output);
         }
     }
     Ok(())
