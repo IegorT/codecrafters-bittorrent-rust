@@ -130,6 +130,11 @@ enum Command {
         link: String,
         piece_index: usize,
     },
+    MagnetDownload {
+        #[arg(short = 'o')]
+        output: String,
+        link: String,
+    },
 }
 
 #[tokio::main]
@@ -286,6 +291,28 @@ async fn main() -> anyhow::Result<()> {
 
             std::fs::write(&output, &piece_data).context("Failed to write piece to disk")?;
             println!("Piece {} downloaded to {}.", piece_index, output);
+        }
+        Command::MagnetDownload { output, link } => {
+            let (stream, info_hash, _tracker_url) =
+                connect_to_magnet_peer(&link, peer_id).await?;
+            let (stream, info) = fetch_metadata_info(stream, info_hash, peer_id).await?;
+
+            let mut connection = peer::PeerConnection::from_stream(stream)
+                .await
+                .context("Failed to establish peer connection")?;
+
+            let mut file_data = Vec::with_capacity(info.length);
+            for piece_index in 0..info.piece_count() {
+                let piece_data = connection
+                    .download_piece(piece_index as u32, info.length_of_piece(piece_index))
+                    .await
+                    .with_context(|| format!("Failed to download piece {piece_index}"))?;
+                verify_piece(&piece_data, info.piece_hash(piece_index))?;
+                file_data.extend_from_slice(&piece_data);
+            }
+
+            std::fs::write(&output, &file_data).context("Failed to write file to disk")?;
+            println!("Downloaded {} to {}.", link, output);
         }
     }
     Ok(())
