@@ -1,14 +1,13 @@
-use bytes::{BytesMut, BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Peers(pub Vec<SocketAddrV4>);
 
 impl Peers {
-    pub fn new(bytes: &ByteBuf) -> Self {
-        return Peers(
+    pub fn new(bytes: &[u8]) -> Self {
+        Peers(
             bytes
                 .chunks(6)
                 .map(|chunk| {
@@ -18,7 +17,7 @@ impl Peers {
                     )
                 })
                 .collect(),
-        );
+        )
     }
 }
 
@@ -44,19 +43,16 @@ impl Handshake {
     }
 }
 
-impl TryFrom<&Handshake> for Bytes {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &Handshake) -> Result<Self, Self::Error> {
+impl From<&Handshake> for Bytes {
+    fn from(value: &Handshake) -> Self {
         let mut bytes = BytesMut::with_capacity(68);
         bytes.put_u8(value.length);
         bytes.put_slice(&value.protocol);
         bytes.put_slice(&value.reserved);
         bytes.put_slice(&value.info_hash);
         bytes.put_slice(&value.peer_id);
-        Ok(bytes.freeze())
+        bytes.freeze()
     }
-    
 }
 
 impl TryFrom<&[u8; 68]> for Handshake {

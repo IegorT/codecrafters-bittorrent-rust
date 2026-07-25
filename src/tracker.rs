@@ -27,8 +27,8 @@ impl TrackerRequest {
     pub fn new(peer_id: &[u8; 20], torrent: &Torrent) -> Self {
         TrackerRequest {
             url: torrent.announce.clone(),
-            info_hash: torrent.info.get_hash(),
-            peer_id: peer_id.clone(),
+            info_hash: torrent.info.info_hash(),
+            peer_id: *peer_id,
             port: 6881,
             uploaded: 0,
             downloaded: 0,
@@ -37,7 +37,7 @@ impl TrackerRequest {
         }
     }
 
-    pub fn get_url(self) -> String {
+    pub fn url(&self) -> String {
         format!(
             "{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}&compact={}&left={}",
             self.url,

@@ -10,30 +10,19 @@ pub fn decode_bencoded_value(val: &BencodeValue) -> JsonValue {
     match val {
         BencodeValue::Bytes(b) => JsonValue::String(String::from_utf8_lossy(b).to_string()),
         BencodeValue::Int(i) => JsonValue::Number((*i).into()),
-        BencodeValue::List(l) => {
-            let mut list: Vec<JsonValue> = Vec::new();
-
-            for item in l {
-                let value = decode_bencoded_value(item);
-                list.push(value);
-            }
-
-            JsonValue::Array(list)
-        }
-        BencodeValue::Dict(d) => {
-            let mut dict: serde_json::Map<String, JsonValue> = serde_json::Map::new();
-
-            for (key, value) in d {
-                let key_string = String::from_utf8_lossy(key).to_string();
-                let value = decode_bencoded_value(value);
-                dict.insert(key_string, value);
-            }
-
-            JsonValue::Object(dict)
-        }
+        BencodeValue::List(l) => JsonValue::Array(l.iter().map(decode_bencoded_value).collect()),
+        BencodeValue::Dict(d) => JsonValue::Object(
+            d.iter()
+                .map(|(key, value)| {
+                    (
+                        String::from_utf8_lossy(key).to_string(),
+                        decode_bencoded_value(value),
+                    )
+                })
+                .collect(),
+        ),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
